@@ -1,0 +1,22 @@
+# scan output and logs
+*.csv
+*.log
+*.xml
+*.gnmap
+*.nmap
+*_livehosts.txt
+*_scan_info.txt
+Scans/
+# secrets / local config
+.env
+.env.*
+auth.*
+*.token
+*credential*
+*.pfx
+*.key
+# misc
+*.bak
+*.zip
+tests/out/
+!tests/fixtures/*.xml

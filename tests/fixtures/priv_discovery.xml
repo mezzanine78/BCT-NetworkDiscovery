@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE nmaprun>
+<?xml-stylesheet href="file:///C:/Program Files (x86)/Nmap/nmap.xsl" type="text/xsl"?>
+<nmaprun scanner="nmap" args="nmap -sn -T4 192.168.1.0/24 -oA CLIENT_discovery" start="1767225600" version="7.99" xmloutputversion="1.05">
+<verbose level="0"/><debugging level="0"/>
+<host><status state="up" reason="arp-response" reason_ttl="0"/>
+<address addr="192.168.1.10" addrtype="ipv4"/>
+<address addr="00:11:32:AA:BB:CC" addrtype="mac" vendor="Synology Incorporated"/>
+<hostnames><hostname name="nas01.example.local" type="PTR"/></hostnames>
+<times srtt="512" rttvar="5000" to="100000"/></host>
+<host><status state="up" reason="arp-response" reason_ttl="0"/>
+<address addr="192.168.1.2" addrtype="ipv4"/>
+<address addr="00:1A:8C:11:22:33" addrtype="mac" vendor="Sophos"/>
+<hostnames></hostnames>
+<times srtt="400" rttvar="5000" to="100000"/></host>
+<host><status state="up" reason="localhost-response" reason_ttl="0"/>
+<address addr="192.168.1.100" addrtype="ipv4"/>
+<hostnames><hostname name="scanner.example.local" type="PTR"/></hostnames></host>
+<host><status state="down" reason="no-response" reason_ttl="0"/>
+<address addr="192.168.1.50" addrtype="ipv4"/><hostnames/></host>
+<runstats><finished time="1767225610" elapsed="10.0" exit="success"/><hosts up="3" down="253" total="256"/></runstats>
+</nmaprun>

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE nmaprun>
+<nmaprun scanner="nmap" args="nmap --unprivileged -T4 -Pn -sT -sV --version-intensity 2 -p 22,80,443,3389 --open --max-rate 30 -iL CLIENT_livehosts.txt -oA CLIENT_portscan" start="1767225620" version="7.92" xmloutputversion="1.05">
+<scaninfo type="connect" protocol="tcp" numservices="4" services="22,80,443,3389"/>
+<host><status state="up" reason="user-set" reason_ttl="0"/>
+<address addr="192.168.1.20" addrtype="ipv4"/>
+<hostnames><hostname name="dc01.example.local" type="PTR"/></hostnames>
+<ports><port protocol="tcp" portid="3389"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="ms-wbt-server" product="Microsoft Terminal Services" ostype="Windows" method="probed" conf="10"/></port>
+<port protocol="tcp" portid="80"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="http" product="Microsoft IIS httpd" version="10.0" ostype="Windows" method="probed" conf="10"/></port></ports>
+</host>
+<runstats><finished time="1767225650" elapsed="30.0" exit="success"/><hosts up="1" down="0" total="1"/></runstats>
+</nmaprun>

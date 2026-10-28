@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE nmaprun>
+<nmaprun scanner="nmap" args="nmap -T4 -Pn -sS -sV --version-intensity 2 -p 22,80,443,5001 --open -O --osscan-limit --max-rate 30 -iL CLIENT_livehosts.txt -oA CLIENT_portscan" start="1767225620" version="7.99" xmloutputversion="1.05">
+<scaninfo type="syn" protocol="tcp" numservices="4" services="22,80,443,5001"/>
+<host starttime="1767225620" endtime="1767225650"><status state="up" reason="user-set" reason_ttl="0"/>
+<address addr="192.168.1.10" addrtype="ipv4"/>
+<address addr="00:11:32:AA:BB:CC" addrtype="mac" vendor="Synology Incorporated"/>
+<hostnames><hostname name="nas01.example.local" type="PTR"/></hostnames>
+<ports><extraports state="closed" count="1"><extrareasons reason="reset" count="1"/></extraports>
+<port protocol="tcp" portid="5001"><state state="open" reason="syn-ack" reason_ttl="64"/><service name="http" product="nginx" tunnel="ssl" method="probed" conf="10"/></port>
+<port protocol="tcp" portid="22"><state state="open" reason="syn-ack" reason_ttl="64"/><service name="ssh" product="OpenSSH" version="8.2" extrainfo="protocol 2.0" method="probed" conf="10"/></port>
+<port protocol="tcp" portid="443"><state state="open" reason="syn-ack" reason_ttl="64"/><service name="http" product="nginx" tunnel="ssl" method="probed" conf="10"/></port>
+</ports>
+<os><portused state="open" proto="tcp" portid="22"/>
+<osmatch name="Linux 4.15 - 5.19" accuracy="98" line="1"><osclass type="general purpose" vendor="Linux" osfamily="Linux" osgen="4.X" accuracy="98"/></osmatch>
+<osmatch name="Linux 5.0 - 5.14" accuracy="95" line="2"/>
+</os></host>
+<host><status state="up" reason="user-set" reason_ttl="0"/>
+<address addr="192.168.1.2" addrtype="ipv4"/>
+<address addr="00:1A:8C:11:22:33" addrtype="mac" vendor="Sophos"/>
+<hostnames><hostname name="fw.example.local" type="PTR"/></hostnames>
+<ports><port protocol="tcp" portid="443"><state state="open" reason="syn-ack" reason_ttl="64"/><service name="https" method="table" conf="3"/></port></ports>
+</host>
+<host><status state="up" reason="user-set" reason_ttl="0"/>
+<address addr="192.168.1.100" addrtype="ipv4"/>
+<hostnames/>
+<ports><extraports state="filtered" count="4"/></ports>
+</host>
+<runstats><finished time="1767225650" elapsed="30.0" exit="success"/><hosts up="3" down="0" total="3"/></runstats>
+</nmaprun>
