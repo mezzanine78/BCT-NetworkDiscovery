@@ -6,12 +6,22 @@ irm | iex safe: everything runs inside & { }, and exit is only called when non-i
   $env:BCT_CLIENTCODE = 'CLIENT'; $env:BCT_SUBNETS = '192.168.1.0/24'
   irm https://raw.githubusercontent.com/mezzanine78/BCT-NetworkDiscovery/main/install.ps1 | iex
 
+Signed in at the desktop and want the latest nmap + Npcap (GUI installer you click through):
+  $env:BCT_CLIENTCODE = 'CLIENT'; $env:BCT_INTERACTIVEINSTALL = '1'
+  irm https://raw.githubusercontent.com/mezzanine78/BCT-NetworkDiscovery/main/install.ps1 | iex
+  # or: & ([scriptblock]::Create((irm <same url>))) -InteractiveInstall
+
 Parameters come from BCT_* environment variables (see README). It downloads the main script
 from the repo's main branch (override with BCT_SCRIPT_URL), keeps a copy in C:\BCT\Scripts
 (BCT_SCRIPTDIR) for scheduled tasks, and runs it in memory, so the execution policy does not
 block it. Exit code / $LASTEXITCODE is the main script's (0/1/2/3/4, see README).
 No secrets in this file.
 #>
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '', Justification = 'Used inside the & { } block')]
+[CmdletBinding()]
+param(
+    [switch]$InteractiveInstall   # passed to Invoke-NetworkDiscovery (same as env BCT_INTERACTIVEINSTALL=1)
+)
 & {
     $ErrorActionPreference = 'Stop'
     $ProgressPreference    = 'SilentlyContinue'
@@ -53,9 +63,14 @@ No secrets in this file.
         }
         catch { Write-BctLog "could not save a copy to ${dir}: $($_.Exception.Message)" 'WARN' }
 
-        # Parameters are read from BCT_* env vars by the script itself.
+        # Parameters are read from BCT_* env vars by the script itself; -InteractiveInstall is passed on.
+        $fwd = @{}
+        if ($InteractiveInstall) { $fwd['InteractiveInstall'] = $true }
+        if ($InteractiveInstall -or ($env:BCT_INTERACTIVEINSTALL -match '^\s*(1|true|yes|on)\s*$')) {
+            Write-BctLog 'interactive install mode: the latest nmap setup.exe opens for you to click through if needed'
+        }
         $global:LASTEXITCODE = 0
-        & ([scriptblock]::Create($text))
+        & ([scriptblock]::Create($text)) @fwd
         $rc = $global:LASTEXITCODE
         Exit-Install $rc "Invoke-NetworkDiscovery finished with $rc"
     }

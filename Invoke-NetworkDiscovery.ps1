@@ -6,11 +6,19 @@ BCT / MSP Bergin CT. Replaces Advanced IP Scanner; output feeds the client netwo
   2. Ports/OS  : nmap -sS -sV -O   -> open ports, services, OS guess (live hosts only)
 
 Runs under Windows PowerShell 5.1 (Server 2016+) and pwsh 7, elevated or as SYSTEM (N-central,
-scheduled task). Never prompts. Results are read from nmap XML (no text parsing).
+scheduled task). Never prompts (unless you ask for -InteractiveInstall). Results are read from nmap XML.
 
   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Invoke-NetworkDiscovery.ps1 -ClientCode CLIENT
   & ([scriptblock]::Create((irm <raw-url>/Invoke-NetworkDiscovery.ps1))) -ClientCode CLIENT
   $env:BCT_CLIENTCODE='CLIENT'; irm <raw-url>/install.ps1 | iex
+  $env:BCT_CLIENTCODE='CLIENT'; $env:BCT_INTERACTIVEINSTALL='1'; irm <raw-url>/install.ps1 | iex
+
+-InteractiveInstall (or BCT_INTERACTIVEINSTALL=1): for a technician signed in at the desktop. Finds the
+latest nmap-<ver>-setup.exe on https://nmap.org/dist/, checks its SHA256 against nmap.org's
+sigs/<file>.digest.txt, saves it to <ToolsDir>\installers and opens the normal GUI installer (UAC
+prompt if not elevated) so you click through nmap + the bundled Npcap. Then the scan continues.
+Only when nmap is missing, older than the latest, or Npcap is missing. Skipped (logged) as SYSTEM,
+in session 0, in a remoting session or with -NonInteractive: the unattended chain below is used.
 
 Npcap: the free Npcap installer has no silent mode (/S is Npcap OEM only), so this script never
 installs it. With Npcap present and running it does the full privileged scan. Without it, it falls
@@ -27,7 +35,7 @@ Exit codes (N-central):
 Every parameter can also come from an environment variable (parameter wins): BCT_CLIENTCODE,
 BCT_SUBNETS, BCT_OUTPUTDIR, BCT_PORTS, BCT_TIMING, BCT_MAXRATE, BCT_VERSIONINTENSITY, BCT_NOOSDETECT,
 BCT_ALLOWLARGESUBNET, BCT_USECHOCOLATEY, BCT_CHOCOTIMEOUTSEC, BCT_NMAPPATH, BCT_NMAPZIPURL, BCT_TOOLSDIR,
-BCT_LOGDIR, BCT_FORCEUNPRIVILEGED, BCT_DEGRADEDISSUCCESS. Switches accept 1/true/yes/on.
+BCT_LOGDIR, BCT_FORCEUNPRIVILEGED, BCT_DEGRADEDISSUCCESS, BCT_INTERACTIVEINSTALL. Switches accept 1/true/yes/on.
 No secrets in this file.
 #>
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '', Justification = 'Used inside the & { } block')]
@@ -49,7 +57,8 @@ param(
     [string]$ToolsDir = '',            # default C:\BCT\Tools (zip is extracted to <ToolsDir>\nmap)
     [string]$LogDir = '',              # default C:\BCT\Logs
     [switch]$ForceUnprivileged,        # always use the connect-scan mode (testing)
-    [switch]$DegradedIsSuccess         # exit 0 instead of 3 when Npcap is missing
+    [switch]$DegradedIsSuccess,        # exit 0 instead of 3 when Npcap is missing
+    [switch]$InteractiveInstall        # signed-in technician: download + open the latest nmap setup.exe (GUI)
 )
 
 # Captured here because inside the & { } block $MyInvocation describes the block, not the script.
@@ -58,12 +67,13 @@ $__BCTScriptPath = $MyInvocation.MyCommand.Path
 & {
     $ErrorActionPreference = 'Stop'
     $ProgressPreference    = 'SilentlyContinue'
-    $ScriptVersion = '1.0.0'
+    $ScriptVersion = '1.1.0'
     $Tag = '[net-discovery]'
     $DefaultPorts  = '22,80,81,135,139,443,445,3000,3389,5000,5001,8000,8080,8443,8888,9000,9090,9443'
     $DefaultZipUrl = 'https://nmap.org/dist/nmap-7.92-win32.zip'
     # SHA256 of the official nmap-7.92-win32.zip (last free Windows zip; later zips are Nmap OEM only)
     $DefaultZipSha256 = 'B54C54D4B478CAD19567A504C7C6B7230DFD80ACD881DC2E9015A628A3EFA71E'
+    $NmapDistUrl = 'https://nmap.org/dist/'
     $HostColumns = @('IP', 'Hostname', 'MAC', 'Vendor', 'OS', 'OSAccuracy', 'OpenPorts')
     $PortColumns = @('IP', 'Hostname', 'Port', 'Protocol', 'Service', 'Product', 'Version', 'Extra')
     $state = @{ TranscriptOn = $false; Warnings = New-Object System.Collections.Generic.List[string] }
@@ -304,6 +314,79 @@ $__BCTScriptPath = $MyInvocation.MyCommand.Path
         }
     }
 
+    # ----- -InteractiveInstall: latest nmap setup.exe (pure parts) -----
+    function ConvertTo-NmapVersion([string]$Text) {
+        # '7.92' / '7.993' / '7.92SVN' -> [version]; anything else -> $null. 7.993 > 7.99 > 7.98 as [version].
+        if ([string]$Text -match '^\s*(\d+)\.(\d+)') { return [version]"$($Matches[1]).$($Matches[2])" }
+        return $null
+    }
+
+    function Select-LatestNmapSetup([string]$Listing, [string]$BaseUrl = 'https://nmap.org/dist/') {
+        # Highest stable nmap-<major>.<minor>-setup.exe in a nmap.org/dist (or download.html) page.
+        # BETA / SVN / -vs9 builds are ignored. Returns $null when none is found.
+        $best = $null
+        $rx = '(?<![\w.-])nmap-(\d+\.\d+)-setup\.exe'
+        foreach ($m in [regex]::Matches([string]$Listing, $rx)) {
+            $txt = $m.Groups[1].Value
+            $v = ConvertTo-NmapVersion $txt
+            if (-not $v) { continue }
+            if ($null -eq $best -or $v -gt $best.Version) {
+                $file = "nmap-$txt-setup.exe"
+                $base = $BaseUrl.TrimEnd('/') + '/'
+                $best = [pscustomobject]@{ Version = $v; VersionText = $txt; FileName = $file; Url = $base + $file; DigestUrl = $base + 'sigs/' + $file + '.digest.txt' }
+            }
+        }
+        return $best
+    }
+
+    function Get-DigestSha256([string]$DigestText) {
+        # nmap.org sigs/<file>.digest.txt (gpg --print-mds): 'SHA256 = 22E5928D 1738A1B9 ...', possibly
+        # wrapped over two lines. Returns the 64-char upper-case hex, or $null.
+        $m = [regex]::Match([string]$DigestText, 'SHA256\s*=\s*((?:[0-9A-Fa-f]+\s*)+)')
+        if (-not $m.Success) { return $null }
+        $hex = ($m.Groups[1].Value -replace '\s', '').ToUpperInvariant()
+        if ($hex.Length -lt 64) { return $null }
+        return $hex.Substring(0, 64)
+    }
+
+    function Test-Sha256Match([string]$Actual, [string]$Expected) {
+        # 'Unknown' (no published hash: warn, continue), 'Match', or 'Mismatch' (abort the install).
+        if (-not $Expected) { return 'Unknown' }
+        if (([string]$Actual).Trim().ToUpperInvariant() -eq $Expected.Trim().ToUpperInvariant()) { return 'Match' }
+        return 'Mismatch'
+    }
+
+    function Test-InteractiveSession {
+        # Can a GUI installer be shown to a person? Not as SYSTEM, not in session 0 (services), not in a
+        # remoting session, not with -NonInteractive. Returns Allowed + Reason.
+        param([bool]$UserInteractive, [bool]$IsSystem, [int]$SessionId = 1, [string[]]$CommandLineArgs = @(), [string]$HostName = 'ConsoleHost')
+        $r = [pscustomobject]@{ Allowed = $false; Reason = '' }
+        if ($IsSystem) { $r.Reason = 'running as SYSTEM (no desktop)' }
+        elseif (-not $UserInteractive) { $r.Reason = 'non-interactive session' }
+        elseif ($SessionId -eq 0) { $r.Reason = 'session 0 (service, no desktop)' }
+        elseif ($HostName -eq 'ServerRemoteHost') { $r.Reason = 'PowerShell remoting session (no desktop)' }
+        elseif (@($CommandLineArgs) -match '^-(noni|noninteractive)$') { $r.Reason = 'PowerShell started with -NonInteractive' }
+        else { $r.Allowed = $true; $r.Reason = 'interactive desktop session' }
+        return $r
+    }
+
+    function Get-InteractiveInstallDecision {
+        # Install only when asked, a person can click through it, the latest version is known and
+        # nmap is missing / older than the latest, or Npcap is missing.
+        param([bool]$Requested, [object]$Session, [string]$InstalledVersion, [string]$LatestVersion, [bool]$NpcapPresent)
+        $d = [pscustomobject]@{ Install = $false; Reason = '' }
+        if (-not $Requested) { $d.Reason = 'not requested'; return $d }
+        if ($Session -and -not $Session.Allowed) { $d.Reason = "skipped: $($Session.Reason); using the unattended nmap chain"; return $d }
+        $latest = ConvertTo-NmapVersion $LatestVersion
+        if (-not $latest) { $d.Reason = 'skipped: latest nmap version unknown (nmap.org unreachable?); using the unattended nmap chain'; return $d }
+        $have = ConvertTo-NmapVersion $InstalledVersion
+        if (-not $have) { $d.Install = $true; $d.Reason = "nmap not installed (or does not run); installing $LatestVersion" }
+        elseif ($have -lt $latest) { $d.Install = $true; $d.Reason = "installed nmap $InstalledVersion is older than $LatestVersion" }
+        elseif (-not $NpcapPresent) { $d.Install = $true; $d.Reason = "nmap $InstalledVersion is current but Npcap is missing; running the $LatestVersion installer for Npcap" }
+        else { $d.Reason = "skipped: nmap $InstalledVersion is already the latest ($LatestVersion) and Npcap is installed" }
+        return $d
+    }
+
     # ======================= Windows-side helpers =======================
     function Test-IsAdmin {
         $id = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -456,6 +539,69 @@ $__BCTScriptPath = $MyInvocation.MyCommand.Path
         return $r
     }
 
+    function Get-InteractiveSessionInfo {
+        $id = [Security.Principal.WindowsIdentity]::GetCurrent()
+        $isSystem = [bool]($id.User -and $id.User.Value -eq 'S-1-5-18')
+        $sessionId = -1
+        try { $sessionId = [int](Get-Process -Id $PID).SessionId } catch { $null = $_ }
+        Test-InteractiveSession -UserInteractive ([Environment]::UserInteractive) -IsSystem $isSystem -SessionId $sessionId `
+            -CommandLineArgs ([Environment]::GetCommandLineArgs()) -HostName $Host.Name
+    }
+
+    function Test-NpcapInstalled {
+        (Test-Path 'HKLM:\SYSTEM\CurrentControlSet\Services\npcap') -and
+        (Test-Path -LiteralPath (Join-Path $env:SystemRoot 'System32\Npcap\wpcap.dll'))
+    }
+
+    function Get-LatestNmapSetup([string]$DistUrl) {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        Write-BctLog "looking up the latest nmap setup.exe on $DistUrl"
+        $page = (Invoke-WebRequest -Uri $DistUrl -UseBasicParsing).Content
+        if ($page -is [byte[]]) { $page = [Text.Encoding]::UTF8.GetString($page) }
+        $latest = Select-LatestNmapSetup ([string]$page) $DistUrl
+        if (-not $latest) { throw "no nmap-<ver>-setup.exe found on $DistUrl" }
+        return $latest
+    }
+
+    function Install-NmapInteractive {
+        # Downloads the setup.exe, verifies it against nmap.org's published SHA256 and opens the GUI
+        # installer (no silent switch: free Npcap has none). Returns $true when the installer exits 0.
+        param([object]$Setup, [string]$Tools, [bool]$IsAdmin)
+        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        $dir = Join-Path $Tools 'installers'
+        if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+        $exe = Join-Path $dir $Setup.FileName
+        $expected = $null
+        try {
+            $dg = (Invoke-WebRequest -Uri $Setup.DigestUrl -UseBasicParsing).Content
+            if ($dg -is [byte[]]) { $dg = [Text.Encoding]::UTF8.GetString($dg) }
+            $expected = Get-DigestSha256 ([string]$dg)
+            if (-not $expected) { Write-BctLog "no SHA256 line in $($Setup.DigestUrl); continuing WITHOUT hash verification" 'WARN' }
+        }
+        catch { Write-BctLog "could not fetch $($Setup.DigestUrl) ($($_.Exception.Message)); continuing WITHOUT hash verification" 'WARN' }
+        Write-BctLog "downloading $($Setup.Url) -> $exe"
+        Invoke-WebRequest -Uri $Setup.Url -OutFile $exe -UseBasicParsing
+        $hash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash
+        switch (Test-Sha256Match $hash $expected) {
+            'Match'    { Write-BctLog "SHA256 $hash matches nmap.org" }
+            'Mismatch' {
+                Remove-Item -LiteralPath $exe -Force -ErrorAction SilentlyContinue
+                throw "SHA256 mismatch for $($Setup.FileName): got $hash, nmap.org publishes $expected. Installer deleted and NOT run"
+            }
+            default    { Write-BctLog "SHA256 $hash (not verified)" 'WARN' }
+        }
+        Write-BctLog "opening the nmap $($Setup.VersionText) installer: click through it and keep 'Npcap' ticked (Npcap opens its own installer). The scan continues when both are closed."
+        if ($IsAdmin) { $p = Start-Process -FilePath $exe -Wait -PassThru }
+        else {
+            Write-BctLog 'this PowerShell is not elevated: approve the UAC prompt for the installer' 'WARN'
+            $p = Start-Process -FilePath $exe -Verb RunAs -Wait -PassThru
+        }
+        $rc = $null; if ($p) { $rc = $p.ExitCode }
+        if ($rc -eq 0) { Write-BctLog 'nmap installer finished (exit 0)'; return $true }
+        Write-BctLog "nmap installer exit code $rc (cancelled or failed?)" 'WARN'
+        return $false
+    }
+
     function Invoke-Nmap([string]$Exe, [string[]]$Arguments) {
         Write-BctLog ("nmap " + ($Arguments -join ' '))
         $old = $ErrorActionPreference; $ErrorActionPreference = 'Continue'   # nmap writes warnings to stderr
@@ -489,6 +635,7 @@ $__BCTScriptPath = $MyInvocation.MyCommand.Path
         $useChoco   = [bool]($UseChocolatey -or (Test-EnvFlag 'BCT_USECHOCOLATEY'))
         $forceUnpriv = [bool]($ForceUnprivileged -or (Test-EnvFlag 'BCT_FORCEUNPRIVILEGED'))
         $degradedOk = [bool]($DegradedIsSuccess -or (Test-EnvFlag 'BCT_DEGRADEDISSUCCESS'))
+        $interactiveInstall = [bool]($InteractiveInstall -or (Test-EnvFlag 'BCT_INTERACTIVEINSTALL'))
         $subnetList = Split-ListValue $Subnets
         if ($subnetList.Count -eq 0) { $subnetList = Split-ListValue @([string](Resolve-Setting '' 'BCT_SUBNETS' '')) }
 
@@ -530,6 +677,43 @@ $__BCTScriptPath = $MyInvocation.MyCommand.Path
 
         # ----- nmap -----
         $nmap = Find-Nmap $NmapPath $ToolsDir
+        $interactiveNote = 'not requested'
+        if ($interactiveInstall) {
+            try {
+                $sess = Get-InteractiveSessionInfo
+                $latestSetup = $null; $haveVer = $null
+                if ($sess.Allowed) {
+                    try { $latestSetup = Get-LatestNmapSetup $NmapDistUrl; Write-BctLog "latest nmap on nmap.org: $($latestSetup.VersionText) ($($latestSetup.FileName))" }
+                    catch { Write-BctLog "latest nmap lookup failed: $($_.Exception.Message)" 'WARN' }
+                    if ($nmap) { $haveVer = Test-NmapRun $nmap }
+                }
+                $latestText = ''; if ($latestSetup) { $latestText = $latestSetup.VersionText }
+                $dec = Get-InteractiveInstallDecision -Requested $true -Session $sess -InstalledVersion $haveVer -LatestVersion $latestText -NpcapPresent (Test-NpcapInstalled)
+                $interactiveNote = $dec.Reason
+                if (-not $dec.Install) {
+                    $lvl = 'INFO'; if (-not $sess.Allowed -or -not $latestSetup) { $lvl = 'WARN' }
+                    Write-BctLog "-InteractiveInstall $($dec.Reason)" $lvl
+                }
+                else {
+                    Write-BctLog "-InteractiveInstall: $($dec.Reason)"
+                    try {
+                        $ok = Install-NmapInteractive -Setup $latestSetup -Tools $ToolsDir -IsAdmin $isAdmin
+                        $interactiveNote = "$($dec.Reason); installer exit ok=$ok"
+                    }
+                    catch { Write-BctLog "interactive install aborted: $($_.Exception.Message); continuing with the unattended nmap chain" 'WARN'; $interactiveNote = "aborted: $($_.Exception.Message)" }
+                    # re-detect: prefer the freshly installed Program Files (x86)\Nmap build
+                    Sync-SessionPath
+                    $pfNmap = $null
+                    foreach ($pf in @(${env:ProgramFiles(x86)}, $env:ProgramFiles)) {
+                        if ($pf -and -not $pfNmap -and (Test-Path -LiteralPath (Join-Path $pf 'Nmap\nmap.exe') -PathType Leaf)) { $pfNmap = Join-Path $pf 'Nmap\nmap.exe' }
+                    }
+                    if ($pfNmap -and (Test-NmapRun $pfNmap)) { $nmap = $pfNmap } else { $nmap = Find-Nmap $NmapPath $ToolsDir }
+                    Write-BctLog ("after install: nmap {0}, Npcap installed: {1}" -f $(if ($nmap) { $nmap } else { 'not found' }), (Test-NpcapInstalled))
+                    if (-not $isAdmin) { Write-BctLog 'this PowerShell is not elevated, so this run is still a degraded connect scan; re-run from an elevated PowerShell for the full scan' 'WARN' }
+                }
+            }
+            catch { Write-BctLog "-InteractiveInstall failed: $($_.Exception.Message); continuing with the unattended nmap chain" 'WARN'; $interactiveNote = "failed: $($_.Exception.Message)" }
+        }
         if (-not $nmap -and $useChoco) {
             try { Install-NmapChocolatey $ChocoTimeoutSec $LogDir } catch { Write-BctLog "Chocolatey install failed: $($_.Exception.Message)" 'WARN' }
             $nmap = Find-Nmap $NmapPath $ToolsDir
@@ -596,6 +780,7 @@ $__BCTScriptPath = $MyInvocation.MyCommand.Path
             "ScanMode: $scanMode"
             "Npcap: $(if ($npcap.Present) { "$($npcap.Version) ($($npcap.Detail))" } else { $npcap.Detail })"
             "Nmap: $nmapVer ($nmap)"
+            "InteractiveInstall: $interactiveNote"
             "Targets: $($subnetList -join ' ')"
             "Ports: $Ports"
             "Timing: $TimingArg  MaxRate: $MaxRate  VersionIntensity: $VersionIntensity  OsDetect: $($osDetect -and $privileged)"
