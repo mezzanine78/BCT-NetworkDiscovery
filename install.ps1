@@ -6,7 +6,8 @@ irm | iex safe: everything runs inside & { }, and exit is only called when non-i
   $env:BCT_CLIENTCODE = 'CLIENT'; $env:BCT_SUBNETS = '192.168.1.0/24'
   irm https://raw.githubusercontent.com/mezzanine78/BCT-NetworkDiscovery/main/install.ps1 | iex
 
-Signed in at the desktop and want the latest nmap + Npcap (GUI installer you click through):
+The latest nmap is installed/upgraded silently by default when elevated (needs Npcap already present).
+Signed in at the desktop and Npcap missing? Allow the Npcap GUI prompt (you click through it):
   $env:BCT_CLIENTCODE = 'CLIENT'; $env:BCT_INTERACTIVEINSTALL = '1'
   irm https://raw.githubusercontent.com/mezzanine78/BCT-NetworkDiscovery/main/install.ps1 | iex
   # or: & ([scriptblock]::Create((irm <same url>))) -InteractiveInstall
@@ -20,7 +21,8 @@ No secrets in this file.
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '', Justification = 'Used inside the & { } block')]
 [CmdletBinding()]
 param(
-    [switch]$InteractiveInstall   # passed to Invoke-NetworkDiscovery (same as env BCT_INTERACTIVEINSTALL=1)
+    [switch]$InteractiveInstall,  # passed on: allow the Npcap GUI prompt (same as env BCT_INTERACTIVEINSTALL=1)
+    [switch]$SkipLatestNmap       # passed on: no latest-nmap download/upgrade (same as env BCT_SKIPLATESTNMAP=1)
 )
 & {
     $ErrorActionPreference = 'Stop'
@@ -63,11 +65,12 @@ param(
         }
         catch { Write-BctLog "could not save a copy to ${dir}: $($_.Exception.Message)" 'WARN' }
 
-        # Parameters are read from BCT_* env vars by the script itself; -InteractiveInstall is passed on.
+        # Parameters are read from BCT_* env vars by the script itself; the switches are passed on.
         $fwd = @{}
         if ($InteractiveInstall) { $fwd['InteractiveInstall'] = $true }
+        if ($SkipLatestNmap) { $fwd['SkipLatestNmap'] = $true }
         if ($InteractiveInstall -or ($env:BCT_INTERACTIVEINSTALL -match '^\s*(1|true|yes|on)\s*$')) {
-            Write-BctLog 'interactive install mode: the latest nmap setup.exe opens for you to click through if needed'
+            Write-BctLog 'interactive install: if Npcap is missing, its installer opens for you to click through'
         }
         $global:LASTEXITCODE = 0
         & ([scriptblock]::Create($text)) @fwd

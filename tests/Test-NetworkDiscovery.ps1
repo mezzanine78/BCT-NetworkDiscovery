@@ -4,7 +4,7 @@ the script's functions are loaded through the PowerShell AST, so no scan or inst
 
   pwsh -NoProfile -File tests/Test-NetworkDiscovery.ps1
   $env:BCT_TEST_NMAP = '/path/to/nmap'   # optional: also do a real -sT scan of 127.0.0.1 only
-  $env:BCT_TEST_LIVE = '1'                # optional: check nmap.org's latest setup.exe + SHA256 live
+  $env:BCT_TEST_LIVE = '1'                # optional: live check of nmap.org (setup.exe + SHA256) and npcap.com/dist
 Exit code = number of failed tests.
 #>
 $ErrorActionPreference = 'Stop'
@@ -163,7 +163,7 @@ $ecsv = Join-Path $out 'EMPTY_ports.csv'
 Export-ReportCsv @() $ecsv $PortColumns
 Assert ((Get-Content $ecsv).Count -eq 1 -and @(Import-Csv $ecsv).Count -eq 0) 'header-only CSV when no rows'
 
-Write-Host '-InteractiveInstall: latest nmap version (saved nmap.org/dist listing)'
+Write-Host 'latest nmap version (saved nmap.org/dist listing)'
 $listing = Get-Content -LiteralPath (Join-Path $fix 'nmap_dist_listing.html') -Raw
 $lt = Select-LatestNmapSetup $listing 'https://nmap.org/dist/'
 Assert ($null -ne $lt) 'listing parsed'
@@ -182,7 +182,7 @@ Assert ((ConvertTo-NmapVersion '7.92SVN') -eq [version]'7.92') 'version 7.92SVN'
 Assert ($null -eq (ConvertTo-NmapVersion '')) 'empty version -> $null'
 Assert ($null -eq (ConvertTo-NmapVersion 'abc')) 'garbage version -> $null'
 
-Write-Host '-InteractiveInstall: SHA256 from nmap.org digest files'
+Write-Host 'SHA256 from nmap.org digest files'
 $d1 = Get-Content -LiteralPath (Join-Path $fix 'nmap-7.993-setup.exe.digest.txt') -Raw
 $d2 = Get-Content -LiteralPath (Join-Path $fix 'nmap-7.99-setup.exe.digest.txt') -Raw
 Assert ((Get-DigestSha256 $d1) -eq '22E5928D1738A1B94FFD3643014F52CB87D467DBEC4CFF9E5F721FE0B3782F1B') 'SHA256 parsed (one-line format, 7.993)'
@@ -198,7 +198,7 @@ Assert ((Test-Sha256Match $fakeHash (Get-DigestSha256 $d1)) -eq 'Mismatch') 'has
 Assert ((Test-Sha256Match $fakeHash $null) -eq 'Unknown') 'no published hash -> Unknown (warn, continue)'
 Assert ((Test-Sha256Match $fakeHash '') -eq 'Unknown') 'empty published hash -> Unknown'
 
-Write-Host '-InteractiveInstall: session checks'
+Write-Host 'session checks (Npcap prompt / UAC)'
 $ok = Test-InteractiveSession -UserInteractive $true -IsSystem $false -SessionId 2 -CommandLineArgs @('pwsh.exe') -HostName 'ConsoleHost'
 Assert ($ok.Allowed) 'signed-in pwsh console allowed'
 $ok = Test-InteractiveSession -UserInteractive $true -IsSystem $false -SessionId 1 -CommandLineArgs @('powershell.exe', '-NoProfile', '-Command', 'irm x | iex') -HostName 'ConsoleHost'
@@ -214,29 +214,76 @@ Assert (-not $no.Allowed -and $no.Reason -like '*-NonInteractive*') '-NonInterac
 $no = Test-InteractiveSession -UserInteractive $true -IsSystem $false -SessionId 1 -HostName 'ServerRemoteHost'
 Assert (-not $no.Allowed -and $no.Reason -like '*remoting*') 'remoting session refused'
 
-Write-Host '-InteractiveInstall: install / skip decision'
-$desk = [pscustomobject]@{ Allowed = $true; Reason = 'interactive desktop session' }
-$sys  = [pscustomobject]@{ Allowed = $false; Reason = 'running as SYSTEM (no desktop)' }
-$dd = Get-InteractiveInstallDecision -Requested $false -Session $desk -InstalledVersion '' -LatestVersion '7.993' -NpcapPresent $false
-Assert (-not $dd.Install -and $dd.Reason -eq 'not requested') 'not requested -> skip'
-$dd = Get-InteractiveInstallDecision -Requested $true -Session $sys -InstalledVersion '' -LatestVersion '7.993' -NpcapPresent $false
-Assert (-not $dd.Install -and $dd.Reason -like '*SYSTEM*unattended*') "SYSTEM -> skip, fall back ($($dd.Reason))"
-$dd = Get-InteractiveInstallDecision -Requested $true -Session $desk -InstalledVersion '' -LatestVersion '' -NpcapPresent $false
-Assert (-not $dd.Install -and $dd.Reason -like '*latest*unknown*') 'latest unknown -> skip, fall back'
-$dd = Get-InteractiveInstallDecision -Requested $true -Session $desk -InstalledVersion '' -LatestVersion '7.993' -NpcapPresent $true
-Assert ($dd.Install -and $dd.Reason -like 'nmap not installed*') 'nmap missing -> install'
-$dd = Get-InteractiveInstallDecision -Requested $true -Session $desk -InstalledVersion '7.92' -LatestVersion '7.993' -NpcapPresent $true
-Assert ($dd.Install -and $dd.Reason -like '*older*') '7.92 (zip) older than 7.993 -> install'
-$dd = Get-InteractiveInstallDecision -Requested $true -Session $desk -InstalledVersion '7.99' -LatestVersion '7.993' -NpcapPresent $true
-Assert ($dd.Install) '7.99 older than 7.993 -> install'
-$dd = Get-InteractiveInstallDecision -Requested $true -Session $desk -InstalledVersion '7.993' -LatestVersion '7.993' -NpcapPresent $false
-Assert ($dd.Install -and $dd.Reason -like '*Npcap is missing*') 'latest nmap but no Npcap -> install'
-$dd = Get-InteractiveInstallDecision -Requested $true -Session $desk -InstalledVersion '7.993' -LatestVersion '7.993' -NpcapPresent $true
-Assert (-not $dd.Install -and $dd.Reason -like '*already the latest*') 'already latest + Npcap -> skip'
-$dd = Get-InteractiveInstallDecision -Requested $true -Session $desk -InstalledVersion '8.0' -LatestVersion '7.993' -NpcapPresent $true
-Assert (-not $dd.Install) 'newer than nmap.org (dev build) -> skip'
+Write-Host 'Npcap: latest free installer (saved npcap.com/dist listing)'
+$nlisting = Get-Content -LiteralPath (Join-Path $fix 'npcap_dist_listing.html') -Raw
+$nl = Select-LatestNpcapSetup $nlisting 'https://npcap.com/dist/'
+Assert ($null -ne $nl -and $nl.VersionText -eq '1.90') "latest Npcap = 1.90 (got $($nl.VersionText))"
+Assert ($nl.Url -eq 'https://npcap.com/dist/npcap-1.90.exe' -and $nl.FileName -eq 'npcap-1.90.exe') 'Npcap URL / file name'
+Assert ($nl.DigestUrl -eq '') 'npcap.com publishes no digest'
+$nmix = 'npcap-1.82-debug.exe npcap-1.90-oem.exe npcap-1.95-DebugSymbols.zip npcap-1.96.zip npcap-sdk-1.17.zip npcap-nmap-9.9.exe npcap-1.10.exe npcap-1.89.exe npcap-0.9997.exe'
+Assert ((Select-LatestNpcapSetup $nmix).VersionText -eq '1.89') 'debug/oem/zip/sdk/npcap-nmap ignored; 1.89 > 1.10 > 0.9997'
+Assert ((Select-LatestNpcapSetup 'npcap-1.90.exe npcap-1.100.exe').VersionText -eq '1.100') 'Npcap sorted as [version]'
+Assert ($null -eq (Select-LatestNpcapSetup 'npcap-sdk-1.17.zip')) 'no installer -> $null'
 
-Write-Host '-InteractiveInstall: switch / env precedence'
+Write-Host 'Authenticode publisher check'
+$subjNew = 'CN=Nmap Software LLC, O=Nmap Software LLC, L=Beaverton, S=Oregon, C=US, SERIALNUMBER=6397588'
+$subjOld = 'CN="Insecure.Com LLC", O="Insecure.Com LLC", L=Seattle, S=Washington, C=US'
+Assert ((Test-PublisherSignature 'Valid' $subjNew) -eq 'Valid') 'valid + Nmap Software LLC -> Valid'
+Assert ((Test-PublisherSignature 'Valid' 'CN=Insecure.Com LLC, O=Insecure.Com LLC, C=US') -eq 'Valid') 'valid + Insecure.Com LLC -> Valid'
+Assert ((Test-PublisherSignature 'Valid' 'CN=Evil Nmap Software LLC Clone, O=Evil') -eq 'Invalid') 'valid but other publisher -> Invalid'
+Assert ((Test-PublisherSignature 'Valid' $subjOld) -eq 'Valid') 'quoted Insecure.Com LLC subject -> Valid'
+Assert ((Test-PublisherSignature 'Valid' 'CN=Nmap Software LLC Fake, O=Other') -eq 'Invalid') 'prefix look-alike -> Invalid'
+Assert ((Test-PublisherSignature 'NotSigned' '') -eq 'Invalid') 'unsigned -> Invalid'
+Assert ((Test-PublisherSignature 'HashMismatch' $subjNew) -eq 'Invalid') 'tampered -> Invalid'
+Assert ((Test-PublisherSignature 'NotTrusted' $subjNew) -eq 'Invalid') 'untrusted -> Invalid'
+Assert ((Test-PublisherSignature 'UnknownError' $subjNew) -eq 'Unknown') 'unknown status -> Unknown (warn)'
+
+Write-Host 'silent latest-nmap decision matrix'
+function Get-D($dis, $adm, $uac, $have, $latest, $np) { Get-SilentNmapDecision -DisabledReason $dis -IsAdmin $adm -CanPromptUac $uac -InstalledVersion $have -LatestVersion $latest -NpcapInstalled $np }
+$dd = Get-D '' $true $false '' '7.993' $true
+Assert ($dd.Install -and -not $dd.UseRunAs -and $dd.Reason -like 'nmap not installed*silently') 'SYSTEM/elevated, no nmap, Npcap present -> silent install'
+$dd = Get-D '' $true $false '7.92' '7.993' $true
+Assert ($dd.Install -and $dd.Reason -like '*7.92 is older than 7.993*') 'SYSTEM/elevated, 7.92 zip -> silent upgrade'
+$dd = Get-D '' $true $false '7.99' '7.993' $true
+Assert ($dd.Install) '7.99 -> 7.993 upgrade'
+$dd = Get-D '' $true $false '7.993' '7.993' $true
+Assert (-not $dd.Install -and $dd.Reason -like '*already the latest*') 'already latest -> no install'
+$dd = Get-D '' $true $false '8.0' '7.993' $true
+Assert (-not $dd.Install) 'newer dev build -> no install'
+$dd = Get-D '' $true $false '' '7.993' $false
+Assert (-not $dd.Install -and $dd.Reason -like '*cannot run silently without Npcap*') 'SYSTEM, no Npcap -> skip (installer would show a dialog), fall back to zip'
+$dd = Get-D '' $true $false '7.92' '7.993' $false
+Assert (-not $dd.Install) 'old nmap, no Npcap -> skip'
+$dd = Get-D '' $true $false '' '' $true
+Assert (-not $dd.Install -and $dd.Reason -like '*unknown*') 'nmap.org unreachable -> skip, fall back'
+$dd = Get-D '-SkipLatestNmap / BCT_SKIPLATESTNMAP' $true $false '' '7.993' $true
+Assert (-not $dd.Install -and $dd.Reason -like 'skipped: -SkipLatestNmap*') '-SkipLatestNmap -> skip'
+$dd = Get-D '' $false $false '' '7.993' $true
+Assert (-not $dd.Install -and $dd.Reason -like '*not elevated*') 'not elevated, no prompt allowed -> skip'
+$dd = Get-D '' $false $true '' '7.993' $true
+Assert ($dd.Install -and $dd.UseRunAs) 'not elevated, signed-in + -InteractiveInstall -> UAC prompt'
+
+Write-Host 'Npcap prompt decision'
+$desk = [pscustomobject]@{ Allowed = $true; Reason = 'interactive desktop session' }
+$sys  = Test-InteractiveSession -UserInteractive $true -IsSystem $true -SessionId 0
+$noni = Test-InteractiveSession -UserInteractive $true -IsSystem $false -SessionId 1 -CommandLineArgs @('powershell.exe', '-NonInteractive')
+$np = Get-NpcapPromptDecision -NpcapInstalled $true -AllowPrompt $true -Session $desk
+Assert (-not $np.Prompt -and $np.Reason -like 'Npcap already*') 'Npcap present -> zero prompts'
+$np = Get-NpcapPromptDecision -NpcapInstalled $false -AllowPrompt $true -Session $desk
+Assert ($np.Prompt) 'Npcap missing + -InteractiveInstall + desktop -> prompt'
+$np = Get-NpcapPromptDecision -NpcapInstalled $false -AllowPrompt $false -Session $desk
+Assert (-not $np.Prompt -and $np.Reason -like '*-InteractiveInstall*') 'Npcap missing, switch off -> no prompt (degraded)'
+$np = Get-NpcapPromptDecision -NpcapInstalled $false -AllowPrompt $true -Session $sys
+Assert (-not $np.Prompt -and $np.Reason -like '*SYSTEM*') 'Npcap missing as SYSTEM -> no prompt (degraded)'
+$np = Get-NpcapPromptDecision -NpcapInstalled $false -AllowPrompt $true -Session $noni
+Assert (-not $np.Prompt -and $np.Reason -like '*NonInteractive*') 'Npcap missing, -NonInteractive -> no prompt'
+$np = Get-NpcapPromptDecision -NpcapInstalled $false -AllowPrompt $true -Session $null
+Assert (-not $np.Prompt) 'no session info -> no prompt'
+$mainText0 = Get-Content -LiteralPath $main -Raw
+Assert ($mainText0 -match "NmapSilentArgs = @\('/S', '/NPCAP=NO', '/ZENMAP=NO'\)") 'silent args /S /NPCAP=NO /ZENMAP=NO'
+Assert ($mainText0 -match '(?s)Install-NmapSilent.*Install-NmapChocolatey \$ChocoTimeoutSec.*Install-NmapZip \$NmapZipUrl') 'chain order in main: silent latest -> choco -> 7.92 zip'
+
+Write-Host 'switch / env precedence'
 Remove-Item Env:BCT_INTERACTIVEINSTALL -ErrorAction SilentlyContinue
 Assert (-not ([bool]($false -or (Test-EnvFlag 'BCT_INTERACTIVEINSTALL')))) 'default off'
 $env:BCT_INTERACTIVEINSTALL = '1'
@@ -245,6 +292,7 @@ Remove-Item Env:BCT_INTERACTIVEINSTALL
 Assert ([bool]($true -or (Test-EnvFlag 'BCT_INTERACTIVEINSTALL'))) '-InteractiveInstall turns it on without env'
 $mainText = Get-Content -LiteralPath $main -Raw
 Assert ($mainText -match '\$interactiveInstall = \[bool\]\(\$InteractiveInstall -or \(Test-EnvFlag ''BCT_INTERACTIVEINSTALL''\)\)') 'main script resolves switch > env'
+Assert ($mainText -match '\$skipLatest = \[bool\]\(\$SkipLatestNmap -or \(Test-EnvFlag ''BCT_SKIPLATESTNMAP''\)\)') 'main script resolves -SkipLatestNmap > env'
 $inst = Join-Path $root 'install.ps1'
 $itok = $null; $ierr = $null
 $iast = [System.Management.Automation.Language.Parser]::ParseFile($inst, [ref]$itok, [ref]$ierr)
@@ -253,7 +301,7 @@ Assert (@($iast.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.Us
 Assert ((Get-Content -LiteralPath $inst -Raw) -match '@fwd') 'install.ps1 passes it through to the main script'
 
 if ($env:BCT_TEST_LIVE) {
-    Write-Host 'live: nmap.org latest setup.exe + published SHA256'
+    Write-Host 'live: nmap.org latest setup.exe + published SHA256, npcap.com latest installer'
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
     $live = Select-LatestNmapSetup ([string](Invoke-WebRequest -Uri 'https://nmap.org/dist/' -UseBasicParsing).Content)
     Assert ($null -ne $live -and $live.Version -ge [version]'7.99') "live latest found: $($live.FileName)"
@@ -262,6 +310,10 @@ if ($env:BCT_TEST_LIVE) {
     Assert ($shaLive -match '^[0-9A-F]{64}$') "live SHA256 for $($live.FileName): $shaLive"
     $head = Invoke-WebRequest -Uri $live.Url -Method Head -UseBasicParsing
     Assert ($head.StatusCode -eq 200) "live setup.exe reachable ($($live.Url), $($head.Headers['Content-Length']) bytes)"
+    $nlive = Select-LatestNpcapSetup ([string](Invoke-WebRequest -Uri 'https://npcap.com/dist/' -UseBasicParsing).Content)
+    Assert ($null -ne $nlive -and $nlive.Version -ge [version]'1.80') "live latest Npcap found: $($nlive.FileName)"
+    $nhead = Invoke-WebRequest -Uri $nlive.Url -Method Head -UseBasicParsing
+    Assert ($nhead.StatusCode -eq 200) "live Npcap installer reachable ($($nlive.Url), $($nhead.Headers['Content-Length']) bytes)"
 }
 else { Write-Host 'live nmap.org check skipped (set BCT_TEST_LIVE=1)' }
 
